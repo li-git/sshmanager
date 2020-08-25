@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ var (
 	mysql_dsn            *string
 	ssh_port             *string
 	keyPath              *string
+	encryt_str           *string
 	server_sshs          map[*ssh.ServerConn]bool
 	local_ip             string
 	mutex                sync.Mutex
@@ -38,8 +40,9 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	mysql_dsn = flag.String("dsn", "root:Pass_123@tcp(10.100.125.17:3306)/logan_test?charset=utf8", "mysql dsn")
+	mysql_dsn = flag.String("dsn", "root:ysDn5tOSmJ8=@tcp(10.100.125.17:3306)/logan_test?charset=utf8", "mysql dsn")
 	ssh_port = flag.String("sshport", "2222", "sshport")
+	encryt_str = flag.String("encryt_str", "", "encryt_str")
 	server_sshs = make(map[*ssh.ServerConn]bool)
 }
 func handleChannel(newChannel ssh.NewChannel) {
@@ -154,6 +157,14 @@ func check_timer() {
 }
 func main() {
 	flag.Parse()
+	if len(*encryt_str) > 0 {
+		log.Println("encrypte result ", private_encode(*encryt_str))
+		os.Exit(0)
+	}
+	reg := regexp.MustCompile(":(.*)@")
+	pass_crypt := reg.FindStringSubmatch(*mysql_dsn)[1]
+	*mysql_dsn = strings.Replace(*mysql_dsn, pass_crypt, private_decode(pass_crypt), 1)
+
 	sys_ip := get_local_ip()
 	if sys_ip != nil {
 		log.Println("local ip is ", string(sys_ip))

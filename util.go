@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"log"
 	"net"
@@ -42,4 +43,22 @@ func get_local_ip() []byte {
 		}
 	}
 	return nil
+}
+func private_encode(str string) string {
+	magic_str := []byte("z_tstaflafl)aldfjaljl*afldfjalj")
+	str_slice := []byte(str)
+	for i := 0; i < len(str_slice); i++ {
+		str_slice[i] = str_slice[i] + magic_str[i%len(magic_str)]
+	}
+	return base64.StdEncoding.EncodeToString(str_slice)
+}
+func private_decode(str string) string {
+	magic_str := []byte("z_tstaflafl)aldfjaljl*afldfjalj")
+	origin_str, err := base64.StdEncoding.DecodeString(str)
+	if err == nil {
+		for i := 0; i < len(origin_str); i++ {
+			origin_str[i] = origin_str[i] - magic_str[i%len(magic_str)]
+		}
+	}
+	return string(origin_str)
 }
