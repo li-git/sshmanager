@@ -2,14 +2,17 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kr/pty"
 	"golang.org/x/crypto/ssh"
@@ -17,13 +20,17 @@ import (
 
 var (
 	hostPrivateKeySigner ssh.Signer
-	mysql_dsn            string
-	ssh_port             string
+	mysql_dsn            *string
+	ssh_port             *string
+	keyPath              *string
+	server_sshs          map[*ssh.ServerConn]bool
+	local_ip             string
+	mutex                sync.Mutex
 )
 
 func init() {
-	keyPath := "/root/.ssh/key_rsa"
-	hostPrivateKey, err := ioutil.ReadFile(keyPath)
+	keyPath = flag.String("key", "/root/.ssh/key_rsa", " ssh key path")
+	hostPrivateKey, err := ioutil.ReadFile(*keyPath)
 	if err != nil {
 		panic(err)
 	}
@@ -31,8 +38,9 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	mysql_dsn = "root:Pass_123@tcp(10.100.125.17:3306)/logan_test?charset=utf8"
-	ssh_port = "2222"
+	mysql_dsn = flag.String("dsn", "root:Pass_123@tcp(10.100.125.17:3306)/logan_test?charset=utf8", "mysql dsn")
+	ssh_port = flag.String("sshport", "2222", "sshport")
+	server_sshs = make(map[*ssh.ServerConn]bool)
 }
 func handleChannel(newChannel ssh.NewChannel) {
 	if t := newChannel.ChannelType(); t != "session" {
@@ -106,15 +114,62 @@ func ssh_working(chans <-chan ssh.NewChannel, sshConn *ssh.ServerConn) {
 	for newChannel := range chans {
 		go handleChannel(newChannel)
 	}
+	//sshConn.Close()
+	del_ssh_conn(sshConn)
+}
+func add_ssh_conn(sshConn *ssh.ServerConn) {
+	mutex.Lock()
+	server_sshs[sshConn] = true
+	mutex.Unlock()
+}
+func del_ssh_conn(sshConn *ssh.ServerConn) {
 	sshConn.Close()
+	mutex.Lock()
+	delete(server_sshs, sshConn)
+	mutex.Unlock()
+}
+func del_ssh_all() {
+	mutex.Lock()
+	for k := range server_sshs {
+		k.Close()
+		delete(server_sshs, k)
+	}
+	mutex.Unlock()
+}
+func check_timer() {
+	for {
+		endtime, err := get_endtime(local_ip)
+		if err != nil {
+			log.Println("timer refresh failed, ", err)
+		} else {
+			endstamp, err := time.Parse("2006-01-02 15:04:05", string(endtime))
+			if err == nil && time.Now().Unix() > endstamp.Unix() {
+				del_ssh_all()
+				log.Println("host expired ", local_ip)
+			}
+			//log.Println("===========>", string(endtime))
+		}
+		time.Sleep(time.Duration(5) * time.Second)
+	}
 }
 func main() {
+	flag.Parse()
+	sys_ip := get_local_ip()
+	if sys_ip != nil {
+		log.Println("local ip is ", string(sys_ip))
+		local_ip = string(sys_ip)
+	} else {
+		log.Println("can not get local ip")
+		os.Exit(0)
+	}
+	init_server(string(local_ip))
+	go check_timer()
 	config := ssh.ServerConfig{
 		//PublicKeyCallback: keyAuth,
 		PasswordCallback: passAuth,
 	}
 	config.AddHostKey(hostPrivateKeySigner)
-	socket, err := net.Listen("tcp", ":"+ssh_port)
+	socket, err := net.Listen("tcp", ":"+*ssh_port)
 	if err != nil {
 		log.Println("tcp listen failed ", err)
 	}
@@ -130,6 +185,7 @@ func main() {
 			log.Println("Connection from", sshConn.RemoteAddr())
 			go ssh.DiscardRequests(reqs)
 			go ssh_working(chans, sshConn)
+			add_ssh_conn(sshConn)
 		}
 	}
 }
